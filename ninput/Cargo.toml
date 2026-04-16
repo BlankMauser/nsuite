@@ -1,0 +1,13 @@
+[package]
+name = "ninput"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+tests = []
+
+[dependencies]
+skyline = { workspace = true }
+ringbuf = { workspace = true }
+ncommon = { path = "../ncommon" }

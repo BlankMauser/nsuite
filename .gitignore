@@ -1,0 +1,5 @@
+/scripts
+
+# Personal branch: keep local nsuite scripts trackable here.
+!/scripts/
+!/scripts/**

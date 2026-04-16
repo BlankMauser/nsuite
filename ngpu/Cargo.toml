@@ -1,0 +1,13 @@
+[package]
+name = "ngpu"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["tests"]
+tests = []
+
+[dependencies]
+skyline = { workspace = true }
+locks = { workspace = true }
+ncommon = { path = "../ncommon" }

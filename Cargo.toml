@@ -1,0 +1,32 @@
+[package]
+name = "nsuite"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[workspace]
+members = [".", "ncommon", "ngpu", "ninput", "nmem", "nsocket", "ntask"]
+default-members = ["."]
+
+[workspace.dependencies]
+skyline = { git = "https://github.com/ultimate-research/skyline-rs" }
+locks = { git = "https://github.com/HDR-Development/smashline" }
+ringbuf = "0.4.8"
+
+[features]
+default = []
+not-ssbu = []
+tests = []
+rive-host-ffi = []
+
+[dependencies]
+skyline = { workspace = true }
+locks = { workspace = true }
+ncommon = { path = "ncommon" }
+ngpu = { path = "ngpu" }
+ninput = { path = "ninput" }
+nmem = { path = "nmem" }
+ntask = { path = "ntask" }
+

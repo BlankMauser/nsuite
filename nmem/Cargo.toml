@@ -1,0 +1,10 @@
+[package]
+name = "nmem"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+skyline = { workspace = true }
+locks = { workspace = true }
+ngpu = { path = "../ngpu" }
+ncommon = { path = "../ncommon" }
