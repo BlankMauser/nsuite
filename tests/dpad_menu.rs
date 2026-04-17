@@ -1,7 +1,10 @@
 use skyline::install_hooks;
 
-use crate::ninput;
-use crate::tests::check_api;
+use nsuite::ngpu;
+use nsuite::ninput;
+
+#[path = "check_api.rs"]
+mod check_api;
 
 pub type DebugBlitCallback = unsafe extern "C" fn(controller_id: u8);
 pub type BufferSwapCallback = unsafe extern "C" fn(controller_id: u8);
@@ -153,13 +156,13 @@ pub struct PlayerCard {
 // this function loops while the css is active
 #[skyline::hook(offset = 0x1a2b570)]
 unsafe fn css_dpad_debug (arg: *const CharaSelect) {
-    if crate::ngpu::debug::enabled() {
-        crate::ngpu::debug::dbg_shapes::axis_cross_2d(
+    if ngpu::debug::enabled() {
+        ngpu::debug::dbg_shapes::axis_cross_2d(
             0.0,
             0.0,
             32.0,
             0.0,
-            crate::ngpu::debug::DebugColor {
+            ngpu::debug::DebugColor {
                 r: 0.6,
                 g: 0.6,
                 b: 0.6,
@@ -325,21 +328,21 @@ pub unsafe fn on_frame_check_menu_combo() -> bool {
         draw.supports_draw_texture
     );
 
-    let next_overlay_enabled = !crate::ngpu::debug::enabled();
-    crate::ngpu::debug::set_enabled(next_overlay_enabled);
+    let next_overlay_enabled = !ngpu::debug::enabled();
+    ngpu::debug::set_enabled(next_overlay_enabled);
     ncommon::logN!(
         target: "menu",
         "debug overlay toggled enabled={}",
         next_overlay_enabled
     );
 
-    if crate::ngpu::debug::enabled() {
-        crate::ngpu::debug::dbg_shapes::axis_cross_2d(
+    if ngpu::debug::enabled() {
+        ngpu::debug::dbg_shapes::axis_cross_2d(
             0.0,
             0.0,
             32.0,
             0.0,
-            crate::ngpu::debug::DebugColor {
+            ngpu::debug::DebugColor {
                 r: 0.6,
                 g: 0.6,
                 b: 0.6,

@@ -1,4 +1,4 @@
-use crate::ninput::gamepad;
+use nsuite::ninput::gamepad;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]

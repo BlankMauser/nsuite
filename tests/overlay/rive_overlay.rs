@@ -4,8 +4,8 @@ use std::time::Instant;
 
 use skyline::libc::{c_char, c_void};
 
-use crate::ngpu;
-use crate::nmem;
+use nsuite::ngpu;
+use nsuite::nmem;
 use ngpu::debug::dbg_draw::{clear_draw_list, lines_snapshot, DebugLine};
 type OverlayHandleProvider = fn(*mut ngpu::NvnQueue) -> ngpu::NvnCommandHandle;
 
@@ -57,9 +57,7 @@ const RIVE_DROP_STATE_ON_DRAW_FAIL: bool = true;
 #[cfg(feature = "rive-host-ffi")]
 const RIVE_ENABLE_ADVANCE: bool = true;
 #[cfg(feature = "rive-host-ffi")]
-// The NVN callback path is not stable on-device; even filtered first-frame
-// logging can trip a user-break in Nintendo's system thread. Keep it off in
-// normal runs and use one-off local instrumentation instead.
+
 const RIVE_ENABLE_NVN_LOG_CALLBACK: bool = false;
 #[cfg(feature = "rive-host-ffi")]
 const RIVE_NVN_LOG_LINE_BUDGET: usize = 96;
@@ -82,8 +80,6 @@ const RIVE_DEBUG_FORCE_CLEAR_COLOR: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 const NVN_MAX_TEXTURE_SIZE_NX: u32 = 16384;
 
 const POOL_FLAGS_CPU_UNCACHED_GPU_UNCACHED: i32 = 0x00000002 | 0x00000010;
-const POOL_FLAGS_CPU_UNCACHED_GPU_CACHED: i32 = 0x00000002 | 0x00000020;
-const POOL_FLAGS_SHADER_CODE: i32 = 0x00000040;
 const NVN_CLEAR_COLOR_MASK_RGBA: i32 = 0x0000000F;
 const NVN_SYNC_CONDITION_ALL_GPU_COMMANDS_COMPLETE: i32 = 0;
 const NVN_SYNC_WAIT_ALREADY_SIGNALED: i32 = 0;
@@ -98,44 +94,9 @@ const OVERLAY_RING_MIN_LEN: usize = 8;
 const OVERLAY_CMDBUF_COMMAND_BYTES: usize = 0x40000;
 const OVERLAY_CMDBUF_CONTROL_BYTES: usize = 0x20000;
 
-const SIMPLE2D_VERT_CODE: &[u8] = include_bytes!(
-    "../../../reference/glslcompile/project-starlight/shader_binaries/simple_2d/vertex/code.bin"
-);
-const SIMPLE2D_VERT_CONTROL: &[u8] = include_bytes!(
-    "../../../reference/glslcompile/project-starlight/shader_binaries/simple_2d/vertex/control.bin"
-);
-const SIMPLE2D_FRAG_CODE: &[u8] = include_bytes!(
-    "../../../reference/glslcompile/project-starlight/shader_binaries/simple_2d/fragment/code.bin"
-);
-const SIMPLE2D_FRAG_CONTROL: &[u8] = include_bytes!(
-    "../../../reference/glslcompile/project-starlight/shader_binaries/simple_2d/fragment/control.bin"
-);
-
-#[repr(C, align(8))]
-struct RawNvnProgram {
-    reserved: [u8; 128],
-}
-
-#[repr(C, align(8))]
-struct RawNvnBufferBuilder {
-    reserved: [u8; 64],
-}
-
-#[repr(C, align(8))]
-struct RawNvnBuffer {
-    reserved: [u8; 48],
-}
-
 #[repr(C, align(8))]
 struct RawNvnSync {
     reserved: [u8; 64],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct ShaderDataWire {
-    data: ngpu::NvnBufferAddress,
-    control: *const c_void,
 }
 
 #[repr(C)]
@@ -146,20 +107,6 @@ struct RawNvnCopyRegion {
     width: i32,
     height: i32,
     depth: i32,
-}
-
-struct ControlMemory {
-    ptr: *mut u8,
-    layout: std::alloc::Layout,
-}
-
-struct OverlayShaderResources {
-    _shader_pool: nmem::OwnedMemoryPool,
-    program: Box<RawNvnProgram>,
-    _code_buffers: [Box<RawNvnBuffer>; 2],
-    _shader_data: [ShaderDataWire; 2],
-    control_memory: ControlMemory,
-    program_initialized: bool,
 }
 
 struct OverlayCommandSlot {
@@ -185,7 +132,6 @@ struct OverlayRenderer {
     _arena: nmem::CommandBufferArena,
     slots: Vec<OverlayCommandSlot>,
     frame_slot: usize,
-    shader: Option<OverlayShaderResources>,
     tick: u32,
     completed_rive_frame: u64,
     #[cfg(feature = "rive-host-ffi")]
@@ -756,25 +702,6 @@ struct RiveOverlayState {
     target_height: u32,
     frame_number: u64,
     bootstrap_trigger_armed: bool,
-}
-
-impl Drop for OverlayShaderResources {
-    fn drop(&mut self) {
-        unsafe {
-            if self.program_initialized {
-                ngpu::resource::program_finalize(
-                    (&mut *self.program as *mut RawNvnProgram).cast::<ngpu::NvnProgram>(),
-                );
-            }
-            ngpu::mem::buffer_finalize(
-                (&mut *self._code_buffers[0] as *mut RawNvnBuffer).cast::<ngpu::NvnBuffer>(),
-            );
-            ngpu::mem::buffer_finalize(
-                (&mut *self._code_buffers[1] as *mut RawNvnBuffer).cast::<ngpu::NvnBuffer>(),
-            );
-            std::alloc::dealloc(self.control_memory.ptr, self.control_memory.layout);
-        }
-    }
 }
 
 impl Drop for OverlayCommandSlot {
@@ -1756,26 +1683,10 @@ unsafe fn ensure_overlay_renderer_initialized() -> bool {
             i += 1;
         }
 
-        let shader = match try_initialize_shader_resources(device) {
-            Ok(v) => {
-                ncommon::logN!(target: "overlay.rive", "overlay shader program initialized");
-                Some(v)
-            }
-            Err(reason) => {
-                ncommon::logN!(
-                    target: "overlay.rive",
-                    "overlay shader init failed ({}); using clear-texture fallback only",
-                    reason
-                );
-                None
-            }
-        };
-
         *guard = Some(OverlayRenderer {
             _arena: arena,
             slots,
             frame_slot: 0,
-            shader,
             tick: 0,
             completed_rive_frame: 0,
             #[cfg(feature = "rive-host-ffi")]
@@ -1793,158 +1704,6 @@ unsafe fn ensure_overlay_renderer_initialized() -> bool {
         ncommon::logN!(target: "overlay.rive", "initialized overlay renderer");
     }
     true
-}
-
-unsafe fn try_initialize_shader_resources(
-    device: *mut ngpu::NvnDevice,
-) -> Result<OverlayShaderResources, &'static str> {
-    let vert_code_off = 0usize;
-    let frag_code_off = align_up(vert_code_off + SIMPLE2D_VERT_CODE.len(), 0x100);
-    // NVN pool storage size must be page-granular; non-page-aligned sizes can fail initialize.
-    let shader_pool_size = align_up(
-        align_up(frag_code_off + SIMPLE2D_FRAG_CODE.len(), 0x100) + 0x400,
-        0x1000,
-    );
-    let shader_pool = nmem::OwnedMemoryPool::new(
-        device,
-        shader_pool_size,
-        0x1000,
-        POOL_FLAGS_CPU_UNCACHED_GPU_CACHED | POOL_FLAGS_SHADER_CODE,
-        Some(b"nsuite_overlay_shader_pool\0"),
-    )
-    .map_err(|_| "shader_pool_new")?;
-
-    let control_total =
-        align_up(SIMPLE2D_VERT_CONTROL.len(), 0x100) + align_up(SIMPLE2D_FRAG_CONTROL.len(), 0x100);
-    let control_layout = std::alloc::Layout::from_size_align(control_total, 0x100)
-        .map_err(|_| "control_layout")?;
-    let control_ptr = std::alloc::alloc_zeroed(control_layout);
-    if control_ptr.is_null() {
-        return Err("control_alloc");
-    }
-    let mut control_memory = ControlMemory {
-        ptr: control_ptr,
-        layout: control_layout,
-    };
-
-    let result = (|| {
-        let vert_ctl_off = 0usize;
-        let frag_ctl_off = align_up(vert_ctl_off + SIMPLE2D_VERT_CONTROL.len(), 0x100);
-        core::ptr::copy_nonoverlapping(
-            SIMPLE2D_VERT_CONTROL.as_ptr(),
-            control_ptr.add(vert_ctl_off),
-            SIMPLE2D_VERT_CONTROL.len(),
-        );
-        core::ptr::copy_nonoverlapping(
-            SIMPLE2D_FRAG_CONTROL.as_ptr(),
-            control_ptr.add(frag_ctl_off),
-            SIMPLE2D_FRAG_CONTROL.len(),
-        );
-
-        let shader_mem = shader_pool.map_ptr();
-        if shader_mem.is_null() {
-            return Err("shader_pool_map");
-        }
-        core::ptr::copy_nonoverlapping(
-            SIMPLE2D_VERT_CODE.as_ptr(),
-            shader_mem.add(vert_code_off),
-            SIMPLE2D_VERT_CODE.len(),
-        );
-        core::ptr::copy_nonoverlapping(
-            SIMPLE2D_FRAG_CODE.as_ptr(),
-            shader_mem.add(frag_code_off),
-            SIMPLE2D_FRAG_CODE.len(),
-        );
-        shader_pool.flush_mapped_range(vert_code_off, SIMPLE2D_VERT_CODE.len());
-        shader_pool.flush_mapped_range(frag_code_off, SIMPLE2D_FRAG_CODE.len());
-
-        let mut builder = Box::new(core::mem::zeroed::<RawNvnBufferBuilder>());
-        let builder_ptr = (&mut *builder as *mut RawNvnBufferBuilder).cast::<ngpu::NvnBufferBuilder>();
-        ngpu::mem::buffer_builder_set_defaults(builder_ptr);
-        ngpu::mem::buffer_builder_set_device(builder_ptr, device);
-
-        let mut code_buffers = [
-            Box::new(core::mem::zeroed::<RawNvnBuffer>()),
-            Box::new(core::mem::zeroed::<RawNvnBuffer>()),
-        ];
-
-        ngpu::mem::buffer_builder_set_storage(
-            builder_ptr,
-            shader_pool.as_raw_pool_ptr(),
-            vert_code_off as isize,
-            SIMPLE2D_VERT_CODE.len(),
-        );
-        if ngpu::mem::buffer_initialize(
-            (&mut *code_buffers[0] as *mut RawNvnBuffer).cast::<ngpu::NvnBuffer>(),
-            builder_ptr,
-        ) == 0
-        {
-            return Err("vertex_shader_buffer_init");
-        }
-
-        ngpu::mem::buffer_builder_set_storage(
-            builder_ptr,
-            shader_pool.as_raw_pool_ptr(),
-            frag_code_off as isize,
-            SIMPLE2D_FRAG_CODE.len(),
-        );
-        if ngpu::mem::buffer_initialize(
-            (&mut *code_buffers[1] as *mut RawNvnBuffer).cast::<ngpu::NvnBuffer>(),
-            builder_ptr,
-        ) == 0
-        {
-            return Err("fragment_shader_buffer_init");
-        }
-
-        let shader_data = [
-            ShaderDataWire {
-                data: ngpu::mem::buffer_get_address(
-                    (&*code_buffers[0] as *const RawNvnBuffer).cast::<ngpu::NvnBuffer>(),
-                ),
-                control: control_ptr.add(vert_ctl_off).cast(),
-            },
-            ShaderDataWire {
-                data: ngpu::mem::buffer_get_address(
-                    (&*code_buffers[1] as *const RawNvnBuffer).cast::<ngpu::NvnBuffer>(),
-                ),
-                control: control_ptr.add(frag_ctl_off).cast(),
-            },
-        ];
-
-        let mut program = Box::new(core::mem::zeroed::<RawNvnProgram>());
-        let program_ptr = (&mut *program as *mut RawNvnProgram).cast::<ngpu::NvnProgram>();
-        if ngpu::resource::program_initialize(program_ptr, device) == 0 {
-            return Err("program_initialize");
-        }
-        if ngpu::resource::program_set_shaders(
-            program_ptr,
-            shader_data.len() as i32,
-            shader_data.as_ptr().cast::<ngpu::NvnShaderData>(),
-        ) == 0
-        {
-            return Err("program_set_shaders");
-        }
-
-        Ok(OverlayShaderResources {
-            _shader_pool: shader_pool,
-            program,
-            _code_buffers: code_buffers,
-            _shader_data: shader_data,
-            control_memory: ControlMemory {
-                ptr: control_memory.ptr,
-                layout: control_memory.layout,
-            },
-            program_initialized: true,
-        })
-    })();
-
-    if result.is_ok() {
-        control_memory.ptr = core::ptr::null_mut();
-    } else if !control_memory.ptr.is_null() {
-        std::alloc::dealloc(control_memory.ptr, control_memory.layout);
-    }
-
-    result
 }
 
 fn default_overlay_handle_provider(queue: *mut ngpu::NvnQueue) -> ngpu::NvnCommandHandle {
@@ -2188,11 +1947,6 @@ unsafe fn build_overlay_handle_for_texture(
 
         if !emitted_any {
             return 0;
-        }
-
-        if renderer.shader.is_some() {
-            // Program init is validated, but we intentionally skip issuing a shader draw here
-            // until full pipeline state + vertex bindings are wired like project-starlight.
         }
 
         let handle = {
