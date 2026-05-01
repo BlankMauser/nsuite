@@ -19,7 +19,6 @@ ringbuf = "0.4.8"
 default = []
 not-ssbu = []
 tests = []
-rive-host-ffi = []
 
 [dependencies]
 skyline = { workspace = true }
