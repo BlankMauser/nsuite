@@ -1,4 +1,6 @@
-use nsuite::ninput::gamepad;
+#![cfg(feature = "tests")]
+
+use crate::ninput::gamepad;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]

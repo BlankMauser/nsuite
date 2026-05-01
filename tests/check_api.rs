@@ -1,4 +1,6 @@
-use nsuite::ngpu;
+#![cfg(feature = "tests")]
+
+use crate::ngpu;
 use ngpu::consts::*;
 
 const NVN_DEVICE_INFO_API_MAJOR_VERSION: ngpu::NvnDeviceInfo = 0;
